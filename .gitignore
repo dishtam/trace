@@ -1,0 +1,40 @@
+# Build / tool output
+.gradle/
+.gradle-home/
+build/
+out/
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets and credentials — never commit (keys come from env vars only)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.keystore
+*.jks
+credentials.*
+secrets.*
+**/secrets/
+.muse/settings.local.json
+**/application-local.properties
+**/application-local.yml
+**/application-local.yaml
+
+# Captured traces and stores — may contain application values (ADR-0006)
+*.db
+*.db-journal
+*.db-shm
+*.db.wal
+*.jsonl
+trace-events.jsonl
+eval/results/work/
+
+# Logs
+*.log
