@@ -119,7 +119,7 @@ CREATE INDEX idx_events_type ON events(run_id, event_type);
 -- value_versions / edges are derived tables or views over events (Phase 0 task to choose)
 ```
 
-Dialect notes: recursive CTEs exist in both SQLite and DuckDB; JSON access differs — TODO(verify): single payload-JSON design vs typed columns per engine, decided with ADR-0008 benchmark.
+Dialect notes: recursive CTEs exist in both SQLite and DuckDB; JSON access differs — TODO(verify): single payload-JSON design vs typed columns per engine, decided with ADR-0008 benchmark. Measured 2026-10-28 (S0-8, ADR-0008): DuckDB `INTEGER` is 32-bit, so int64 columns (`event_id`, `global_seq`, `timestamp_ns`, invocation IDs) must be `BIGINT` on DuckDB; DuckDB has no SQLite-style rowid autoincrement, so `event_id` is written explicitly there. ADR-0008's benchmark also found the derived-edges CTE fails T5 at 1M events on both engines; the materialised `edges` table below is required before the Phase 0 gate.
 
 Recursive query shape for `trace_back` (sketch; data-flow edges materialised in `edges(from_event, to_event, kind)`):
 

@@ -1,36 +1,30 @@
 ---
 name: eval-localization
-description: Use when running or reporting the TRACE benchmark: Defects4J plus seeded fixtures, overhead, trace size, or localisation accuracy versus the grep-only baseline.
+description: Use when running the evaluation or baseline agent, computing localisation/overhead/cost metrics, or filling the results table. Do NOT use for a single ad-hoc debugging session (that is debug-investigation).
 ---
 
-# Eval Localisation
+# Eval Localization
 
-## What to run
+Spec: [docs/evaluation.md](../../../docs/evaluation.md). Gate:
+[docs/spike-acceptance.md](../../../docs/spike-acceptance.md) (T1–T5).
+Provider rules: [ADR-0010](../../../docs/decisions/ADR-0010-pluggable-llm-provider.md).
 
-1. **Corpus A — seeded fixtures** (skill `add-bug-fixture`): fast, run on
-   every relevant change.
-2. **Corpus B — Defects4J**: real Java bugs; slower, run before releases /
-   claims. TODO: Defects4J subset and version pin — not decided.
-3. **Baseline:** the same bugs given to a grep-only agent (search + source
-   reading, no trace tools). Same model, same time/token budget where
-   applicable. A result without the baseline is not a result.
+Corpora: seeded fixtures (fast — run on every relevant change) and Defects4J
+(slow — run before any claim or release).
 
-## Metrics to report (always all four)
+## Steps
+1. Freeze the bug set, LLM provider + model, budgets, capture profile, and prompt before running. Record them with the results.
+2. Run the grep-only baseline (evaluation.md spec: same provider/model/budget/prompt minus tools) and the TRACE agent per bug.
+3. Score per bug: top-1/top-5 method, top-1 file vs pre-recorded ground truth; slice precision/recall for fixtures with a recorded slice; explanation correctness blind where feasible.
+4. Compute overhead (p50/p95 wall time) + trace volume (spike-acceptance definitions) from the TRACE runs; tokens/$/time per bug for both agents.
+5. Fill the results table in evaluation.md format — per-bug rows, then means.
+6. Compare to T1–T5 and state GO/PIVOT/STOP implication. Never edit thresholds after seeing results without an ADR (`adr` skill).
 
-| Metric | Definition |
-|---|---|
-| Localisation accuracy | Expected root-cause statement is in the returned slice/answer (per corpus; report per-bug, not only the mean) |
-| Slice precision / recall | Returned slice statements vs hand-recorded ground-truth slice (fixtures) |
-| Overhead | Instrumented vs uninstrumented wall time (p50/p95) on the same workload |
-| Trace size | Bytes (and events) per recorded minute / per run, per capture profile |
-
-## Rules
-
-- Publish per-bug rows; averages alone hide regressions.
-- Compare like with like: same capture profile, same machine class, same
-  warm-up. State all three.
-- If accuracy improves but overhead or trace size regresses past the
-  `instrumentation-safety` budget, report that as a failure, not a win.
-- TODO: benchmark harness command/location — not decided. Until it exists,
-  report "harness not built yet" instead of ad-hoc numbers.
-- Never report an improvement that was not measured in this run.
+## Checklist
+- [ ] Same starting info, provider/model, token/time caps for both agents
+- [ ] Ground truth predates the runs
+- [ ] Per-bug rows published; averages not alone
+- [ ] Overhead + MB/min reported alongside accuracy (accuracy-only = invalid win)
+- [ ] Machine spec + capture profile recorded
+- [ ] Unrun/failed bugs listed, not dropped silently
+- [ ] No improvement reported that was not measured in this run; while the harness doesn't exist, report "harness not built yet", not ad-hoc numbers

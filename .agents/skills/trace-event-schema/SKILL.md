@@ -1,43 +1,26 @@
 ---
 name: trace-event-schema
-description: Use when adding or changing a trace event type, graph node/edge type, event schema field, wire format, or storage column for TRACE recordings.
+description: Use when adding or changing a trace event type, event field, graph node/edge type, wire format, or storage column. Do NOT use for merely querying traces or for value-capture policy (that is instrumentation-safety).
 ---
 
 # Trace Event Schema
 
-## Event types (v0 — the only producers may emit these)
+Source of truth: [docs/trace-schema.md](../../../docs/trace-schema.md) (v0.1).
+Storage context: [ADR-0008](../../../docs/decisions/ADR-0008-storage.md).
+Never restate the schema in this skill — edit the doc.
 
-| Event | Required fields (plus common fields below) |
-|---|---|
-| `call` | `invocationId`, `parentInvocationId?`, `class`, `method`, `signature`, `sourceRef`, `argSnapshots[]` |
-| `return` | `invocationId`, `returnSnapshot XOR thrownRef`, `durationNanos` |
-| `assign` | `invocationId`, `variableRef` (local/field/array-elem), `snapshot`, `sourceRef` |
-| `throw` | `exceptionId`, `type`, `message`, `throwingLocation`, `causeId?` |
-| `thread-switch` | `fromThreadId`, `toThreadId`, `reason` (start/join/handoff — TODO: enumerate) |
+## Steps
+1. Edit `docs/trace-schema.md` first, before any producer or consumer code: new/changed event or field, required/optional, meaning, and which graph node/edge it derives.
+2. Bump `schema_version` per the versioning rules there (additive optional = minor; meaning change/removal = major).
+3. Update the DDL + indexes in the same doc section, and note SQLite/DuckDB dialect impact.
+4. Then update producer (`agent/`), store, and graph derivation code — in that order.
+5. Update/add tests: round-trip (emit → store → query), derivation, `trace_back` CTE case using the new element.
+6. Check language neutrality: a Python producer must be able to emit it (see schema doc mapping table).
 
-Common fields on every event: `schemaVersion, traceId, eventId` (monotonic per
-session), `timestampNanos, threadId, language, sessionId`.
-Snapshots: `{kind: primitive|string|enum|null|object-ref|array, value?, typeName, truncated?, objectId?}`.
-
-## Graph types
-
-- Nodes: `MethodInvocation`, `ValueVersion` (SSA-style: one node per assigned
-  value), `Exception`, `Location`. TODO: `Thread`/`IO` nodes — not decided.
-- Edges: `CALLS`, `RETURNS_TO`, `DATA_FLOW` (producer → consumer),
-  `LAST_WRITER` (read → most recent write), `THROWS`, `CAUSED_BY`,
-  `CONTROL_FLOW`. TODO: async hand-off edge name/semantics — not decided.
-
-## Rules for adding a new event type
-
-1. Schema first: add the type + fields here and bump `schemaVersion` before
-   writing any producer or consumer code.
-2. Language-neutral: no Java-only types/names in fields. A Python/Node
-   producer must be able to emit it unchanged.
-3. Bounded: every payload field has a size cap or truncation rule (see
-   `instrumentation-safety`). Unbounded fields are rejected.
-4. Storage: define the SQLite/DuckDB column mapping and the recursive-CTE
-   slice impact in the same change. TODO: exact DDL — not decided.
-5. Tests: add a round-trip test (emit → store → query) and one backward-slice
-   case that uses the new event.
-6. Never silently drop events. If the pipeline sheds load, emit/record the
-   dropped count + reason on session end.
+## Checklist
+- [ ] Schema doc updated + version bumped
+- [ ] Every new payload field bounded (cap/truncation) — else reject
+- [ ] DDL + indexes updated; migration/refusal behaviour for old runs stated
+- [ ] Producer + store + graph + tests updated in one change
+- [ ] No silent event drops introduced (drop counts + reason still recorded at session end)
+- [ ] No Java-only field names/types leaked into the neutral schema

@@ -1,38 +1,30 @@
 ---
 name: mcp-tool-design
-description: Use when adding, renaming, or changing a TRACE MCP tool, its arguments, its response shape, pagination, or response-size caps.
+description: Use when adding, renaming, or changing an MCP tool, its input/output schema, response cap, or pagination. Do NOT use for calling existing tools to investigate a bug (debug-investigation).
 ---
 
 # MCP Tool Design
 
-## Current tools (do not rename without updating CLAUDE.md + this skill)
+Contracts live in [docs/llm-strategy.md](../../../docs/llm-strategy.md).
+Constraint: [ADR-0009](../../../docs/decisions/ADR-0009-llm-tools-not-raw-graph.md).
 
-`get_failure_point`, `trace_back`, `get_call_subtree`, `get_source`,
-`diff_runs`, `confirm_hypothesis`
+Current tools: `get_failure_point`, `trace_back`, `get_call_subtree`,
+`get_source`, `diff_runs`, `confirm_hypothesis`.
 
-## Rules
+## Steps for a new/changed tool
+1. State the one question the tool answers. One tool = one question; verb-first `snake_case`.
+2. Define input schema: IDs from prior responses only. No raw SQL, no free-form graph queries, no paths outside the project. Every argument typed; required ones minimal, optional ones defaulted.
+3. Define output shape: summary + items with citable event/invocation IDs + source locations.
+4. Set a hard response cap + pagination (`truncated` + cursor). Propose the number with rationale in llm-strategy.md — never ship uncapped.
+5. Define structured errors `{code, message, hint}`; distinguish not-found / too-large-narrow-scope / unavailable.
+6. Update [docs/llm-strategy.md](../../../docs/llm-strategy.md) contract table in the same change.
+7. Add contract tests (schema, cap, pagination, IDs, errors) per testing-ci.md.
+8. Safety: read-only by default. Any executing tool (like `confirm_hypothesis`) needs the security-privacy.md sandbox design first.
+9. Provider-neutral: tool schemas must work with every LLM provider in [ADR-0010](../../../docs/decisions/ADR-0010-pluggable-llm-provider.md) — no vendor-specific schema features.
 
-1. **Naming:** `snake_case`, verb-first, named by the question answered
-   (`trace_back`, not `graph_query_2`). One tool = one question.
-2. **Arguments:** IDs from prior tool responses (`invocationId`, `valueId`,
-   `traceId`), never raw SQL, file paths outside the project, or free-form
-   graph queries. Every argument is typed, required ones minimal, optional
-   ones defaulted and documented here when added.
-   TODO: exact JSON schemas per tool — not decided.
-3. **Response caps (hard):** every list response is paginated with an
-   explicit `truncated: true` + cursor when capped. No unbounded subtrees,
-   slices, or source files.
-   TODO: numeric caps (nodes/events/chars per response) — not decided;
-   propose them from `eval-localization` context-size measurements, do not
-   guess them into code.
-4. **Citable output:** every factual item carries its `eventId`/`invocationId`
-   and source location so the LLM can cite it (see `debug-investigation`).
-5. **Errors:** structured `{code, message, hint}`; "not found", "trace too
-   large — narrow the scope", and "replay unavailable" are distinct codes.
-   TODO: error code list — not decided.
-6. **Safety:** tools are read-only except `confirm_hypothesis` (re-executes
-   the target). That tool must require an explicit target + condition and
-   run the debuggee sandboxed (TODO: sandbox design — not decided; a
-   debugger driven by an agent is an attack surface).
-7. Any new tool needs: schema here, a cap, a citable ID in output, and one
-   `debug-investigation` step that uses it. Otherwise it does not ship.
+## Checklist
+- [ ] Contract updated in llm-strategy.md (same change)
+- [ ] Cap + pagination implemented and tested; no unbounded response path
+- [ ] Every factual output item citable by ID
+- [ ] Tool list here and in AGENTS.md still accurate (update if renamed/added)
+- [ ] `debug-investigation` can actually use it (a protocol step references it, or none needed — stated)

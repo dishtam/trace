@@ -1,7 +1,7 @@
 # Testing & CI
 
 All numbers **Proposed** unless stated. Build exists only after Phase 0;
-commands stay `TODO(decide)` in CLAUDE.md until then.
+commands stay `TODO(decide)` in AGENTS.md until then.
 
 ## Test pyramid per module
 

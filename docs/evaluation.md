@@ -5,7 +5,7 @@ Principle: TRACE is only better if it beats a **fair** grep-only baseline on mea
 
 ## Baseline agent (grep-only) — exact spec
 
-- Same model, same token budget, same investigation prompt as the TRACE agent, **minus** TRACE tools and any trace data.
+- Same LLM provider and model (ADR-0010), same token budget, same investigation prompt as the TRACE agent, **minus** TRACE tools and any trace data.
 - Allowed tools: `grep`/search, file read, directory list, plus the bug's **stack trace / failing test output** (that's what a real grep-based workflow starts from).
 - No web, no build/test execution beyond reading the failing output. TODO(decide): may the baseline run the failing test? — question: allowing it is more realistic but costs time comparability.
 - It must output the same report shape (root-cause location + explanation) so scoring is identical.
