@@ -10,4 +10,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "trace"
 includeBuild("build-logic")
-include("agent", "collector", "store", "graph", "jdi-driver", "mcp-server", "eval", "demo-app")
+include("agent", "collector", "store", "graph", "jdi-driver", "mcp-server", "eval", "demo-app", "connect")
