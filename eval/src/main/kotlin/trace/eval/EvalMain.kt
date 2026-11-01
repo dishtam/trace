@@ -20,7 +20,7 @@ fun main(args: Array<String>) {
     val providerName = options["provider"] ?: "meta"
     val bugs = (options["bugs"] ?: "B01,B02,B03,B04,B05,B06,B07,B08,B09,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20").split(",").map { it.trim() }
     val runnerSelection = options["runner"] ?: "both"
-    val repoRoot = Path.of(options["repo"] ?: ".").toAbsolutePath().normalize()
+    val repoRoot = findRepoRoot(Path.of(options["repo"] ?: ".").toAbsolutePath().normalize())
     val outDir = repoRoot.resolve(options["out"] ?: "eval/results")
     Files.createDirectories(outDir)
 
@@ -99,6 +99,25 @@ private fun summary(bug: String, runner: String, client: LlmClient, result: Inve
         put("wall_ms", result.wallMillis)
         put("budget_exceeded", result.budgetExceeded)
     }
+
+/**
+ * Gradle's :eval:run executes with the eval/ project dir as the working
+ * directory, so a bare "." there used to resolve fixtures as
+ * eval/eval/fixtures (found by the Step-3 smoke run, 2026-11-01).
+ * Walk up from the start directory to the repo root (the directory
+ * holding both eval/fixtures and demo-app). If none is found, return
+ * the start unchanged and let the capture fail with its clear error.
+ */
+internal fun findRepoRoot(start: Path): Path {
+    var current: Path? = start
+    while (current != null) {
+        if (Files.isDirectory(current.resolve("eval/fixtures")) && Files.isDirectory(current.resolve("demo-app"))) {
+            return current
+        }
+        current = current.parent
+    }
+    return start
+}
 
 private fun parseArgs(args: Array<String>): Map<String, String> {
     val map = mutableMapOf<String, String>()
