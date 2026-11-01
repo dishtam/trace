@@ -42,4 +42,20 @@ public class OrderController {
     public Map<String, Object> lines(@PathVariable Long id) {
         return Map.of("orderId", id, "lineCount", orders.lineCount(id));
     }
+
+    @PostMapping("/orders/{id}/cancel")
+    public Map<String, Object> cancel(@PathVariable Long id) {
+        OrderEntity order = orders.cancel(id);
+        return Map.of("id", order.id, "status", order.status);
+    }
+
+    @PostMapping("/orders/{id}/confirm")
+    public Map<String, Object> confirm(@PathVariable Long id) {
+        return Map.of("id", id, "status", orders.confirm(id));
+    }
+
+    @GetMapping("/orders/{id}/confirmation")
+    public Map<String, Object> confirmation(@PathVariable Long id) {
+        return Map.of("id", id, "status", orders.confirmationStatus(id));
+    }
 }

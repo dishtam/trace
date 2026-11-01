@@ -1,0 +1,28 @@
+[
+    {
+        "bug": "B02",
+        "runner": "baseline",
+        "provider": "meta",
+        "model": "muse-wonder-1.0",
+        "claimed_root_cause": "trace.demoapp.service.TaxService#taxFor",
+        "tokens_in": 14496,
+        "tokens_out": 3962,
+        "cost_usd": 0.137224,
+        "tool_calls": 9,
+        "wall_ms": 20417,
+        "budget_exceeded": false
+    },
+    {
+        "bug": "B02",
+        "runner": "trace",
+        "provider": "meta",
+        "model": "muse-wonder-1.0",
+        "claimed_root_cause": "trace.demoapp.service.TaxService#taxFor",
+        "tokens_in": 9155,
+        "tokens_out": 2934,
+        "cost_usd": 0.0953,
+        "tool_calls": 5,
+        "wall_ms": 15889,
+        "budget_exceeded": false
+    }
+]

@@ -7,16 +7,19 @@ import trace.demoapp.data.*;
 
 import java.util.concurrent.CompletableFuture;
 
-/** Services. Seeded bugs: B01, B05, B10 (marked SEEDED-Bxx, profile-gated). */
+/** Services. Seeded bugs: B01, B05, B08, B10, B11, B13 (marked SEEDED-Bxx, profile-gated). */
 @Service
 public class OrderService {
     private final CheckoutService checkout;
     private final OrderRepository orders;
     private final ProductRepository products;
+    private final InventoryService inventory;
     private final trace.demoapp.SeededBugs seeded;
+    private final java.util.concurrent.ConcurrentHashMap<Long, String> confirmations = new java.util.concurrent.ConcurrentHashMap<>();
     OrderService(CheckoutService checkout, OrderRepository orders, ProductRepository products,
-                 trace.demoapp.SeededBugs seeded) {
-        this.checkout = checkout; this.orders = orders; this.products = products; this.seeded = seeded;
+                 InventoryService inventory, trace.demoapp.SeededBugs seeded) {
+        this.checkout = checkout; this.orders = orders; this.products = products;
+        this.inventory = inventory; this.seeded = seeded;
     }
 
     @Transactional
@@ -32,14 +35,46 @@ public class OrderService {
         OrderEntity order = new OrderEntity(sku, quantity, total, "PLACED");
         order.lines.add(new OrderLine(order, sku, quantity));
         OrderEntity saved = orders.save(order);
-        confirmAsync(saved.id);
+        // SEEDED-B13 (profile b13): the saved order id is not propagated to the async confirmation.
+        confirmAsync(seeded.active("b13") ? null : saved.id);
         return saved;
     }
 
     /** One async path (demo-app-spec): exercises thread hand-off capture later. */
     @Async("orderExecutor")
     public CompletableFuture<Void> confirmAsync(Long orderId) {
-        return CompletableFuture.completedFuture(null);
+        try {
+            if (orderId == null) throw new IllegalArgumentException("no order id propagated to confirmation");
+            orders.findById(orderId).orElseThrow(() -> new IllegalArgumentException("unknown order " + orderId));
+            confirmations.put(orderId, "CONFIRMED");
+            return CompletableFuture.completedFuture(null);
+        } catch (RuntimeException failure) {
+            return CompletableFuture.failedFuture(failure);
+        }
+    }
+
+    /** Confirms an order and surfaces confirmation failures to the caller. */
+    public String confirm(Long orderId) {
+        CompletableFuture<Void> submitted = confirmAsync(orderId);
+        // SEEDED-B11 (profile b11): the async result is never observed, so its failure is lost.
+        if (seeded.active("b11")) return "SUBMITTED";
+        submitted.join();
+        return "CONFIRMED";
+    }
+
+    public String confirmationStatus(Long orderId) {
+        return confirmations.getOrDefault(orderId, "NONE");
+    }
+
+    /** Cancels an order: restores its stock and marks it cancelled. */
+    @Transactional
+    public OrderEntity cancel(Long orderId) {
+        OrderEntity order = orders.findById(orderId).orElseThrow();
+        // SEEDED-B08 (profile b08): stock is decremented again on the cancel path instead of restored.
+        if (seeded.active("b08")) inventory.decrement(order.sku, order.quantity);
+        else inventory.restock(order.sku, order.quantity);
+        order.status = "CANCELLED";
+        return orders.save(order);
     }
 
     /** JPA/lazy path inside a transaction: touches the LAZY lines collection in-session. */
