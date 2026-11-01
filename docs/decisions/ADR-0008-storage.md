@@ -74,6 +74,44 @@ has ~1000× headroom vs T5 on the edges shape. (−) store ingest is ~10k ev/s
 at 1M scale and edges add an ingest-time build step (~3 s/1M events);
 (−) the DuckDB ingest/size advantages are given up knowingly.
 
+## Implementation of the condition (2026-11-01)
+
+The materialised-edges migration required above has landed (Step 1 of the
+S0-9 decision packet; not yet committed — owner review pending):
+
+- Store: `edges(run_id, from_event, to_event, kind)` table + `idx_edges_to`,
+  built at ingest inside the `insertEvents` transaction with exactly the
+  predecessor rules the derived CTE computed (`SqliteTraceStore.EDGE_SQL`).
+  `rebuildEdges` is idempotent; `ensureEdges` backfills DBs written before
+  the table existed on first `trace_back`. Event schema unchanged — this is
+  a derived table, so `schema_version` stays 0.1 (see trace-schema.md
+  Storage mapping, which now carries the edges DDL).
+- Graph: `TraceQueries.traceBack` walks `edges` (`INDEXED BY idx_edges_to`);
+  caps, pagination, and ordering contract unchanged.
+
+Measured on the S0-8 machine (i5-11300H, 8 GB, JDK 21.0.10), production
+path (the bench's seed-42 dataset inserted through `SqliteTraceStore`,
+queried through `TraceQueries.traceBack`, 100 reps over 20 deep targets):
+1,000,068 events ingested in 161 s including edges (455 MB DB);
+`trace_back` p50 10 ms, p95 19 ms, max 22 ms — T5 (≤2 s) met on the shipped
+query with ~100× headroom. StorageBench re-run at 200k after the change:
+slice parity derived-vs-edges `equal=true` on both engines, SQLite edges
+p95 1 ms.
+
+Corrections to the estimates above, found by measurement:
+- Edges at ingest cost more than the bench's one-pass batch estimate
+  (~3 s/1M): production ingest is now ~6,200 ev/s at 1M scale (161 s total
+  vs 99 s events-only). Accepted: ingest is offline (collector); demo-scale
+  runs (~14k events) are unaffected in practice.
+- Two SQLite planner traps are load-bearing and recorded in code comments:
+  edge derivation must force `idx_events_invocation` for the parent lookup
+  (else O(n²) ingest — 122 s for one 10k chunk at 50k events), and
+  `trace_back` must force `idx_edges_to` (a `(run_id, to_event)` index was
+  used via its run_id prefix alone and scanned the run's edges per step;
+  that index has been removed). An existence-probe `ensureEdges` matters
+  for the same reason: a `COUNT(*)` variant cost ~130 ms/query at 1M.
+
 ## Status
 Proposed — 2026-10-27; benchmark recorded and decision refined 2026-10-28
-(S0-8). Owner acceptance to Accepted pending (asked with the S0-8 commit).
+(S0-8); condition implemented 2026-11-01 (above). Owner acceptance to
+Accepted pending.

@@ -58,6 +58,7 @@ class SqliteTraceStore(dbPath: String) : AutoCloseable {
     fun insertEvents(runId: String, events: List<StoredEvent>) {
         conn.autoCommit = false
         try {
+            val afterEventId = maxEventId()
             var globalSeq = currentGlobalSeq(runId)
             conn.prepareStatement(
                 """INSERT INTO events(run_id, event_type, seq, global_seq, timestamp_ns, thread_id,
@@ -78,8 +79,56 @@ class SqliteTraceStore(dbPath: String) : AutoCloseable {
                 }
                 ps.executeBatch()
             }
+            buildEdges(runId, afterEventId)
             conn.commit()
         } catch (t: Throwable) { conn.rollback(); throw t } finally { conn.autoCommit = true }
+    }
+
+    private fun maxEventId(): Long {
+        conn.createStatement().use { st ->
+            st.executeQuery("SELECT COALESCE(MAX(event_id),0) FROM events").use { return if (it.next()) it.getLong(1) else 0 }
+        }
+    }
+
+    /**
+     * Derives predecessor edges for events with event_id > [afterEventId]
+     * (ADR-0008 materialised edges; rules mirror the graph derivation in
+     * trace-schema.md). Must be called inside the caller's transaction.
+     */
+    private fun buildEdges(runId: String, afterEventId: Long) {
+        for (sql in EDGE_SQL) {
+            conn.prepareStatement(sql).use { ps ->
+                ps.setString(1, runId); ps.setLong(2, afterEventId); ps.executeUpdate()
+            }
+        }
+    }
+
+    /** Rebuilds all edges for a run from its events. Idempotent: delete + re-derive. */
+    fun rebuildEdges(runId: String) {
+        val wasAutoCommit = conn.autoCommit
+        conn.autoCommit = false
+        try {
+            conn.prepareStatement("DELETE FROM edges WHERE run_id=?").use { ps ->
+                ps.setString(1, runId); ps.executeUpdate()
+            }
+            buildEdges(runId, 0)
+            conn.commit()
+        } catch (t: Throwable) { conn.rollback(); throw t } finally { conn.autoCommit = wasAutoCommit }
+    }
+
+    /**
+     * Backfills edges for DBs written before the edges table existed
+     * (trace-schema.md migration note). No-op when edges already exist
+     * or the run has no events.
+     */
+    fun ensureEdges(runId: String) {
+        // Existence probes, not counts: there is deliberately no run_id index
+        // on edges (see DDL note), so a COUNT would scan the run's edges on
+        // every trace_back. LIMIT 1 stops at the first matching row.
+        if (jdbcQuery("SELECT 1 AS x FROM edges WHERE run_id=? LIMIT 1", runId).isNotEmpty()) return
+        if (jdbcQuery("SELECT 1 AS x FROM events WHERE run_id=? LIMIT 1", runId).isNotEmpty()) {
+            rebuildEdges(runId)
+        }
     }
 
     private fun currentGlobalSeq(runId: String): Long {
@@ -175,6 +224,52 @@ class SqliteTraceStore(dbPath: String) : AutoCloseable {
             "CREATE INDEX IF NOT EXISTS idx_events_run_seq ON events(run_id, thread_id, seq)",
             "CREATE INDEX IF NOT EXISTS idx_events_invocation ON events(run_id, invocation_id)",
             "CREATE INDEX IF NOT EXISTS idx_events_type ON events(run_id, event_type)",
+            """CREATE TABLE IF NOT EXISTS edges (
+                 run_id TEXT NOT NULL REFERENCES runs(run_id),
+                 from_event INTEGER NOT NULL, to_event INTEGER NOT NULL, kind TEXT NOT NULL
+               )""",
+            "CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_event)",
+            // An earlier build created this; the planner used only its run_id
+            // prefix for trace_back and scanned every edge of the run per
+            // recursive step. idx_edges_to alone gives the point lookup.
+            "DROP INDEX IF EXISTS idx_edges_run_to",
+        )
+
+        // Predecessor derivation (from_event -> to_event), one statement per rule.
+        // Mirrors TraceQueries' former derived-edges CTE and StorageBench.buildEdges.
+        val EDGE_SQL = listOf(
+            // call -> parent call. INDEXED BY is load-bearing: without it the
+            // planner picks idx_events_type for p and scans every call in the
+            // run per child (O(n^2) ingest; measured 122 s for one 10k chunk
+            // at 50k events). Forced to idx_events_invocation it is a lookup.
+            """INSERT INTO edges(run_id, from_event, to_event, kind)
+               SELECT cur.run_id, p.event_id, cur.event_id, 'call'
+               FROM events cur JOIN events p INDEXED BY idx_events_invocation ON p.run_id = cur.run_id
+                 AND cur.event_type = 'call' AND p.event_type = 'call'
+                 AND p.invocation_id = cur.parent_invocation_id
+               WHERE cur.run_id = ? AND cur.event_id > ?""",
+            // throw/return/catch/assign/field-write -> own invocation's call
+            """INSERT INTO edges(run_id, from_event, to_event, kind)
+               SELECT cur.run_id, p.event_id, cur.event_id, 'call'
+               FROM events cur JOIN events p INDEXED BY idx_events_invocation ON p.run_id = cur.run_id
+                 AND cur.event_type IN ('throw','return','catch','assign','field-write')
+                 AND p.event_type = 'call' AND p.invocation_id = cur.invocation_id
+                 AND p.event_id <> cur.event_id
+               WHERE cur.run_id = ? AND cur.event_id > ?""",
+            // catch -> the throw it catches
+            """INSERT INTO edges(run_id, from_event, to_event, kind)
+               SELECT cur.run_id, p.event_id, cur.event_id, 'exception-propagation'
+               FROM events cur JOIN events p ON p.run_id = cur.run_id
+                 AND cur.event_type = 'catch' AND p.event_type = 'throw'
+                 AND p.event_id = CAST(json_extract(cur.payload, '$.throw_event_id') AS INTEGER)
+               WHERE cur.run_id = ? AND cur.event_id > ?""",
+            // throw -> its cause throw
+            """INSERT INTO edges(run_id, from_event, to_event, kind)
+               SELECT cur.run_id, p.event_id, cur.event_id, 'exception-propagation'
+               FROM events cur JOIN events p ON p.run_id = cur.run_id
+                 AND cur.event_type = 'throw' AND p.event_type = 'throw'
+                 AND p.event_id = CAST(json_extract(cur.payload, '$.cause_event_id') AS INTEGER)
+               WHERE cur.run_id = ? AND cur.event_id > ?""",
         )
     }
 }

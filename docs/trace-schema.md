@@ -116,12 +116,34 @@ CREATE TABLE events (
 CREATE INDEX idx_events_run_seq ON events(run_id, thread_id, seq);
 CREATE INDEX idx_events_invocation ON events(run_id, invocation_id);
 CREATE INDEX idx_events_type ON events(run_id, event_type);
--- value_versions / edges are derived tables or views over events (Phase 0 task to choose)
+-- Derived predecessor edges for trace_back (ADR-0008 condition, S0-8).
+-- Rebuildable from events at any time; events remain the source of truth.
+-- kind: 'call' (invocation linkage) | 'exception-propagation' (catch->throw, throw->cause).
+-- Future producers of assign/field-write data-flow add kind='data-flow' rows
+-- with the same shape; no event-schema change is needed for that.
+CREATE TABLE edges (
+  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  from_event INTEGER NOT NULL, to_event INTEGER NOT NULL, kind TEXT NOT NULL
+);
+CREATE INDEX idx_edges_to ON edges(to_event);
+-- Deliberately no (run_id, to_event) index: the SQLite planner used only its
+-- run_id prefix for trace_back and scanned every edge of the run per recursive
+-- step. idx_edges_to alone gives the per-step point lookup (event_id is unique
+-- across runs in a store, so run isolation is preserved by construction).
+-- value_versions are derived tables or views over events (Phase 0 task to choose)
 ```
+
+Edges migration/backfill: `edges` is a derived table, not an event-schema
+change, so `schema_version` stays `0.1` and old runs are never refused for
+lacking it. Stores built before this table existed have it created by the
+idempotent DDL above and backfilled from `events` on first `trace_back`
+(`ensureEdges`); rebuilding a run's edges is idempotent (delete + re-derive
+from `events`). Dialect: on DuckDB the `from_event`/`to_event` columns
+are `BIGINT` (see dialect notes below).
 
 Dialect notes: recursive CTEs exist in both SQLite and DuckDB; JSON access differs — TODO(verify): single payload-JSON design vs typed columns per engine, decided with ADR-0008 benchmark. Measured 2026-10-28 (S0-8, ADR-0008): DuckDB `INTEGER` is 32-bit, so int64 columns (`event_id`, `global_seq`, `timestamp_ns`, invocation IDs) must be `BIGINT` on DuckDB; DuckDB has no SQLite-style rowid autoincrement, so `event_id` is written explicitly there. ADR-0008's benchmark also found the derived-edges CTE fails T5 at 1M events on both engines; the materialised `edges` table below is required before the Phase 0 gate.
 
-Recursive query shape for `trace_back` (sketch; data-flow edges materialised in `edges(from_event, to_event, kind)`):
+Recursive query shape for `trace_back` (shipped shape; walks the materialised `edges(run_id, from_event, to_event, kind)` table):
 
 ```sql
 WITH RECURSIVE slice(event_id, depth) AS (

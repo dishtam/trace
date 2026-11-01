@@ -222,11 +222,14 @@ object StorageBench {
                 conn.createStatement().use { st ->
                     st.execute("CREATE TABLE IF NOT EXISTS edges(from_event BIGINT, to_event BIGINT, kind TEXT)")
                     st.execute("CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_event)")
+                    // The store now builds edges at ingest; clear them so this
+                    // measures the bench's own buildEdges list, not a duplicate.
+                    st.execute("DELETE FROM edges")
                 }
                 conn.autoCommit = false
-                conn.prepareStatement("INSERT INTO edges(from_event, to_event, kind) VALUES (?,?,?)").use { ps ->
+                conn.prepareStatement("INSERT INTO edges(run_id, from_event, to_event, kind) VALUES (?,?,?,?)").use { ps ->
                     edges.forEachIndexed { i, (from, to, kind) ->
-                        ps.setLong(1, from); ps.setLong(2, to); ps.setString(3, kind); ps.addBatch()
+                        ps.setString(1, RUN_ID); ps.setLong(2, from); ps.setLong(3, to); ps.setString(4, kind); ps.addBatch()
                         if (i % 5000 == 4999) ps.executeBatch()
                     }
                     ps.executeBatch()
@@ -243,7 +246,7 @@ object StorageBench {
                 val duckConn = conn as org.duckdb.DuckDBConnection
                 duckConn.createAppender("main", "edges").use { appender ->
                     edges.forEach { (from, to, kind) ->
-                        appender.beginRow(); appender.append(from); appender.append(to); appender.append(kind); appender.endRow()
+                        appender.beginRow(); appender.append(RUN_ID); appender.append(from); appender.append(to); appender.append(kind); appender.endRow()
                     }
                     appender.flush()
                 }

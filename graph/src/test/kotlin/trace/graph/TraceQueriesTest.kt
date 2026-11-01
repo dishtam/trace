@@ -78,6 +78,45 @@ class TraceQueriesTest {
         assertTrue(page.items.any { it.kind == "throw" }, page.items.toString())
     }
 
+    @Test fun traceBackBackfillsEdgesForLegacyDb(@TempDir dir: Path) {
+        val db = dir.resolve("t.db"); val runId = buildRun(db)
+        // Simulate a DB written before the edges table existed.
+        java.sql.DriverManager.getConnection("jdbc:sqlite:$db").use { conn ->
+            conn.createStatement().use { it.execute("DELETE FROM edges") }
+        }
+        val queries = TraceQueries(db.toString())
+        val page = queries.traceBack(runId, targetEventId = 5, maxDepth = 20, offset = 0)!!
+        assertEquals(listOf("throw", "call", "call", "call", "call"), page.items.map { it.kind })
+        assertEquals(listOf("price", "price", "checkout", "placeOrder", "main"),
+            page.items.map { it.methodName })
+        // Backfill happened: edges are populated again for the next query.
+        val edgeCount = SqliteTraceStore(db.toString()).use { s ->
+            (s.jdbcQuery("SELECT COUNT(*) AS n FROM edges WHERE run_id=?", runId).single()["n"] as Number).toLong()
+        }
+        assertTrue(edgeCount > 0)
+    }
+
+    @Test fun traceBackFollowsExceptionCauseChain(@TempDir dir: Path) {
+        val db = dir.resolve("t.db")
+        SqliteTraceStore(db.toString()).use { s ->
+            s.createRun("cause")
+            s.insertEvents("cause", listOf(
+                StoredEvent("call", 1, 10, 1, invocationId = 1, className = "acme.Web", methodName = "handle", descriptor = "()V"),
+                StoredEvent("call", 2, 20, 1, invocationId = 2, parentInvocationId = 1, className = "acme.Service", methodName = "work", descriptor = "()V"),
+                StoredEvent("throw", 3, 30, 1, invocationId = 2, className = "acme.Service", methodName = "work", descriptor = "()V",
+                    payloadJson = """{"exception_type":"java.lang.IllegalStateException","exception_identity":3}"""),
+                StoredEvent("throw", 4, 40, 1, invocationId = 1, className = "acme.Web", methodName = "handle", descriptor = "()V",
+                    payloadJson = """{"exception_type":"java.lang.RuntimeException","exception_identity":4,"cause_event_id":3}"""),
+            ))
+            s.finalizeRun("cause", 0, true)
+        }
+        // Event ids 1..4 in insert order; trace back from the outer throw (4).
+        val page = TraceQueries(db.toString()).traceBack("cause", targetEventId = 4, maxDepth = 20, offset = 0)!!
+        assertTrue(page.items.any { it.eventId == 3L && it.kind == "throw" }, page.items.toString())
+        assertTrue(page.items.any { it.methodName == "work" }, page.items.toString())
+        assertTrue(page.items.any { it.methodName == "handle" }, page.items.toString())
+    }
+
     @Test fun unknownRunAndTarget(@TempDir dir: Path) {
         val db = dir.resolve("t.db"); buildRun(db)
         val queries = TraceQueries(db.toString())
