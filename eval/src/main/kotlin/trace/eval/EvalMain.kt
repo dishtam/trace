@@ -16,6 +16,9 @@ import java.nio.file.Path
  * Reports land in eval/results/<bug>-<provider>-<runner>.md plus summary.json.
  */
 fun main(args: Array<String>) {
+    // Side-by-side comparison on an external recording (connect-captured):
+    //   :eval:run --args="--external --project <p> --db <trace.db> --symptom-file <f> [--provider meta]"
+    if ("--external" in args) { ExternalCompare.run(args); return }
     val options = parseArgs(args)
     val providerName = options["provider"] ?: "meta"
     val bugs = (options["bugs"] ?: "B01,B02,B03,B04,B05,B06,B07,B08,B09,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20").split(",").map { it.trim() }
@@ -68,7 +71,7 @@ fun main(args: Array<String>) {
     println("reports in $outDir")
 }
 
-private fun writeReport(outDir: Path, bug: String, runner: String, client: LlmClient, result: InvestigationResult) {
+internal fun writeReport(outDir: Path, bug: String, runner: String, client: LlmClient, result: InvestigationResult) {
     val header = buildString {
         appendLine("---")
         appendLine("bug: $bug")
@@ -87,7 +90,7 @@ private fun writeReport(outDir: Path, bug: String, runner: String, client: LlmCl
     Files.writeString(outDir.resolve("$bug-${client.provider}-$runner.md"), header + result.report + "\n")
 }
 
-private fun summary(bug: String, runner: String, client: LlmClient, result: InvestigationResult): JsonObject =
+internal fun summary(bug: String, runner: String, client: LlmClient, result: InvestigationResult): JsonObject =
     buildJsonObject {
         put("bug", bug); put("runner", runner)
         put("provider", client.provider); put("model", client.model)
@@ -119,7 +122,7 @@ internal fun findRepoRoot(start: Path): Path {
     return start
 }
 
-private fun parseArgs(args: Array<String>): Map<String, String> {
+internal fun parseArgs(args: Array<String>): Map<String, String> {
     val map = mutableMapOf<String, String>()
     var i = 0
     while (i < args.size) {

@@ -31,7 +31,9 @@ class MetaClient(
                 add(buildJsonObject { put("role", "system"); put("content", system) })
                 messages.forEach { addAll(encodeMessage(it)) }
             }
-            putJsonArray("tools") {
+            // Omit "tools" when none are offered (concluding turn): an empty array
+            // made the API answer with tool_calls/empty content, not plain text.
+            if (tools.isNotEmpty()) putJsonArray("tools") {
                 tools.forEach { tool ->
                     add(buildJsonObject {
                         put("type", "function")

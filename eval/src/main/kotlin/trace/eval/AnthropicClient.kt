@@ -20,7 +20,7 @@ class AnthropicClient(
         val body = buildJsonObject {
             put("model", model); put("max_tokens", 4096); put("system", system)
             putJsonArray("messages") { messages.forEach { add(encodeMessage(it)) } }
-            putJsonArray("tools") {
+            if (tools.isNotEmpty()) putJsonArray("tools") {
                 tools.forEach { tool ->
                     add(buildJsonObject {
                         put("name", tool.name); put("description", tool.description)
