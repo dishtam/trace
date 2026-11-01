@@ -20,10 +20,12 @@ class InvestigationRunner(
     private val client: LlmClient,
     private val tools: InvestigationTools,
     private val maxTurns: Int = 40,
+    private val budgetCapUsd: Double = 0.50,
+    private val maxToolCalls: Int = 50,
 ) {
     fun investigate(startingInfo: String): InvestigationResult {
         val started = System.nanoTime()
-        val budget = BudgetTracker(client.model)
+        val budget = BudgetTracker(client.model, budgetCapUsd, maxToolCalls)
         val defs = tools.defs()
         val messages = mutableListOf<Msg>(Msg.User(startingInfo))
         val log = mutableListOf<String>()
@@ -40,8 +42,8 @@ class InvestigationRunner(
                     val results = mutableListOf<Pair<String, String>>()
                     for (call in reply.calls) {
                         budget.record(Usage(0, 0), 1)
-                        if (budget.exceeded()) { exceeded = true; break }
-                        val result = try {
+                        if (budget.exceeded()) exceeded = true
+                        val result = if (exceeded) "not executed: investigation budget exhausted" else try {
                             tools.call(call.name, call.arguments)
                         } catch (e: Exception) {
                             "ERROR: tool ${call.name} failed: ${e.message}"
@@ -49,10 +51,48 @@ class InvestigationRunner(
                         log += "${call.name}(${call.arguments}) -> ${result.take(120).replace("\n", " ")}"
                         results += call.id to result.take(MAX_TOOL_RESULT_CHARS)
                     }
-                    if (exceeded) break
+                    // Every call above got a result entry, executed or not: ending
+                    // with unanswered tool calls makes the next API request invalid.
                     messages += Msg.ToolResults(results)
                     if (budget.exceeded()) { exceeded = true; break }
                 }
+            }
+        }
+        // One concluding turn on budget/turn exhaustion (added after the external
+        // databind comparison showed both runners dying mid-investigation with
+        // nothing scored). It runs in a FRESH conversation with a compact
+        // evidence digest: concluding inside the exhausted conversation failed
+        // twice in practice (HTTP 400 on unanswered tool calls, then a literal
+        // "null" reply from the bloated context). No tools are offered.
+        if (finalText == null) {
+            try {
+                val digest = log.joinToString("\n").take(8000)
+                val wrap = client.complete(SYSTEM_PROMPT, listOf(Msg.User(
+                    startingInfo + "\n\nYour investigation budget is exhausted; this is a fresh concluding " +
+                    "conversation. Below is the tool-call log of your investigation (each result truncated). " +
+                    "Using only this evidence, write your final report now in the exact required shape, ending " +
+                    "with the ROOT_CAUSE line naming your single best-supported class and method.\n\n" +
+                    "Investigation log:\n" + digest)), emptyList())
+                budget.record(wrap.usage, 0)
+                log += "wrap-up reply: ${wrap::class.simpleName}"
+                if (wrap is LlmReply.Text && wrap.text.isNotBlank() &&
+                    !wrap.text.trim().equals("null", ignoreCase = true)) {
+                    finalText = wrap.text
+                } else {
+                    // One retry, plain-text only: a first concluding reply of
+                    // tool_calls/blank/"null" must not silently score zero.
+                    val retry = client.complete(SYSTEM_PROMPT, listOf(Msg.User(
+                        "Reply with plain text only; do not call tools. " +
+                        "Write the final investigation report now, ending with exactly one line: " +
+                        "ROOT_CAUSE: <fully-qualified-class>#<method>\n\n" +
+                        "Symptom and investigation evidence:\n" + startingInfo.take(2000) + "\n" + digest)), emptyList())
+                    budget.record(retry.usage, 0)
+                    log += "wrap-up retry reply: ${retry::class.simpleName}"
+                    if (retry is LlmReply.Text && retry.text.isNotBlank() &&
+                        !retry.text.trim().equals("null", ignoreCase = true)) finalText = retry.text
+                }
+            } catch (e: Exception) {
+                log += "wrap-up concluding call failed: ${e.message}"
             }
         }
         val report = finalText ?: "Investigation stopped before a final report (budget or turn limit). Partial evidence is in the tool log."
