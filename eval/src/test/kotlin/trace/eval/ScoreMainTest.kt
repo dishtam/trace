@@ -21,6 +21,16 @@ class ScoreMainTest {
         val b04 = ScoreMain.groundTruth(fixtures.resolve("B04/fixture.md"))
         assertTrue(b04.className.endsWith("InventoryService"), b04.toString())
         assertEquals("decrement", b04.method)
+        // Every fixture in the 20-bug set must parse to a trace.demoapp class.
+        // Method-level truth is required for the Step-2 fixtures; older ones
+        // (e.g. B09) legitimately cite a class/field only (freeze-s0-9.md).
+        val methodLevel = listOf("B06", "B07", "B08", "B11", "B12", "B13", "B15", "B17", "B18", "B19", "B20")
+        for (i in 1..20) {
+            val id = "B%02d".format(i)
+            val truth = ScoreMain.groundTruth(fixtures.resolve("$id/fixture.md"))
+            assertTrue(truth.className.startsWith("trace.demoapp."), "$id -> $truth")
+            if (id in methodLevel) assertNotNull(truth.method, "$id must cite a method-level ground truth")
+        }
     }
 
     @Test fun scoringAndNotRunRows(@TempDir dir: Path) {
@@ -28,7 +38,7 @@ class ScoreMainTest {
         Files.createDirectories(results); Files.createDirectories(fixtures.resolve("B02"))
         Files.writeString(fixtures.resolve("B02/fixture.md"),
             "- ground-truth root cause location: `trace.demoapp.service.TaxService#taxFor`")
-        for (bug in listOf("B03", "B04", "B05", "B09", "B10", "B14", "B16")) {
+        for (bug in (1..20).map { "B%02d".format(it) } - "B02") {
             Files.createDirectories(fixtures.resolve(bug))
             Files.writeString(fixtures.resolve("$bug/fixture.md"),
                 "- ground-truth root cause location: `trace.demoapp.service.TaxService#taxFor`")

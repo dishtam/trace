@@ -16,7 +16,7 @@ import kotlin.streams.asSequence
  * Usage: ScoreMainKt [resultsDir] [fixturesDir]  (defaults eval/results eval/fixtures)
  */
 object ScoreMain {
-    private val BUGS = listOf("B02", "B03", "B04", "B05", "B09", "B10", "B14", "B16")
+    private val BUGS = (1..20).map { "B%02d".format(it) }
     private val PROVIDERS = listOf("meta", "anthropic")
     private val RUNNERS = listOf("baseline", "trace")
 

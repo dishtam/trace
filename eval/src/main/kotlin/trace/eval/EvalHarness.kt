@@ -88,6 +88,7 @@ class EvalHarness(
         fun line(method: String, path: String, result: Pair<Int, String>) =
             "$method $path -> HTTP ${result.first} ${result.second.replace("\n", " ")}"
         return when (bugId) {
+            "B01" -> listOf(line("POST", "/orders (unknown sku)", req("POST", "/orders", """{"sku":"UNKNOWN","quantity":1}""")))
             "B02" -> listOf(line("POST", "/orders", req("POST", "/orders", """{"sku":"SKU-2","quantity":1}""")))
             "B03" -> listOf(line("GET", "/pricing?sku=SKU-1&quantity=5", req("GET", "/pricing?sku=SKU-1&quantity=5")))
             "B04" -> {
@@ -105,7 +106,42 @@ class EvalHarness(
             "B10" -> listOf(line("GET", "/orders/9999", req("GET", "/orders/9999")))
             "B14" -> listOf(line("GET", "/pricing?sku=SKU-1&quantity=1", req("GET", "/pricing?sku=SKU-1&quantity=1")))
             "B16" -> listOf(line("POST", "/orders", req("POST", "/orders", """{"sku":"SKU-1","quantity":1}""")))
-            else -> throw IllegalArgumentException("no trigger sequence for $bugId in the S0-6 set")
+            "B06" -> listOf(line("POST", "/orders", req("POST", "/orders", """{"sku":"SKU-1","quantity":1}""")))
+            "B07" -> listOf(
+                line("PUT", "/products/SKU-1/sale-price", req("PUT", "/products/SKU-1/sale-price", """{"salePriceCents":500}""")),
+                line("GET", "/products/SKU-1", req("GET", "/products/SKU-1")))
+            "B08" -> {
+                val before = req("GET", "/stock/SKU-1")
+                val placed = req("POST", "/orders", """{"sku":"SKU-1","quantity":1}""")
+                val id = Regex(""""id":(\d+)""").find(placed.second)?.groupValues?.get(1) ?: "?"
+                listOf(line("GET", "/stock/SKU-1", before), line("POST", "/orders", placed),
+                    line("POST", "/orders/$id/cancel", req("POST", "/orders/$id/cancel")),
+                    line("GET", "/stock/SKU-1", req("GET", "/stock/SKU-1")))
+            }
+            "B11" -> listOf(line("POST", "/orders/9999/confirm", req("POST", "/orders/9999/confirm")))
+            "B12" -> {
+                val set = req("PUT", "/stock/SKU-1", """{"quantity":1}""")
+                val attempts = (1..2).map {
+                    java.util.concurrent.CompletableFuture.supplyAsync { req("POST", "/orders", """{"sku":"SKU-1","quantity":1}""") }
+                }.map { it.join() }
+                listOf(line("PUT", "/stock/SKU-1 (quantity=1)", set)) +
+                    attempts.map { line("POST", "/orders (parallel, one unit in stock)", it) }
+            }
+            "B13" -> {
+                val placed = req("POST", "/orders", """{"sku":"SKU-1","quantity":1}""")
+                val id = Regex(""""id":(\d+)""").find(placed.second)?.groupValues?.get(1) ?: "?"
+                Thread.sleep(600)
+                listOf(line("POST", "/orders", placed),
+                    line("GET", "/orders/$id/confirmation", req("GET", "/orders/$id/confirmation")))
+            }
+            "B15" -> listOf(line("GET", "/pricing?sku=SKU-1&quantity=1", req("GET", "/pricing?sku=SKU-1&quantity=1")))
+            "B17" -> listOf(line("POST", "/pricing/callback", req("POST", "/pricing/callback", """{"sku":"SKU-1","totalCents":1234}""")))
+            "B18" -> listOf(line("GET", "/pricing/regional?sku=SKU-1&quantity=1&region=EU",
+                req("GET", "/pricing/regional?sku=SKU-1&quantity=1&region=EU")))
+            "B19" -> listOf(line("GET", "/checkout/shipping?sku=SKU-2&quantity=2",
+                req("GET", "/checkout/shipping?sku=SKU-2&quantity=2")))
+            "B20" -> listOf(line("POST", "/orders (unknown sku)", req("POST", "/orders", """{"sku":"UNKNOWN","quantity":1}""")))
+            else -> throw IllegalArgumentException("no trigger sequence for $bugId in the fixture set")
         }
     }
 

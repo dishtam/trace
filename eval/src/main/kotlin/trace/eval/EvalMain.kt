@@ -18,7 +18,7 @@ import java.nio.file.Path
 fun main(args: Array<String>) {
     val options = parseArgs(args)
     val providerName = options["provider"] ?: "meta"
-    val bugs = (options["bugs"] ?: "B02,B03,B04,B05,B09,B10,B14,B16").split(",").map { it.trim() }
+    val bugs = (options["bugs"] ?: "B01,B02,B03,B04,B05,B06,B07,B08,B09,B10,B11,B12,B13,B14,B15,B16,B17,B18,B19,B20").split(",").map { it.trim() }
     val runnerSelection = options["runner"] ?: "both"
     val repoRoot = Path.of(options["repo"] ?: ".").toAbsolutePath().normalize()
     val outDir = repoRoot.resolve(options["out"] ?: "eval/results")
