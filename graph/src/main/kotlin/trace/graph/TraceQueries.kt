@@ -33,6 +33,11 @@ data class SubtreeNode(
  * (b) the parent call event via parent_invocation_id, (c) for catch events the
  * caught throw, (d) for throw events its cause throw. assign/field-write events
  * join through rule (a) automatically once capture emits them.
+ *
+ * The walk uses the materialised `edges` table (ADR-0008 condition): the store
+ * derives those predecessors at ingest; DBs written before the table existed
+ * are backfilled via ensureEdges on first use. The former derived-edges CTE
+ * failed T5 at 1M events (p95 155 s SQLite; ADR-0008 benchmark).
  */
 class TraceQueries(private val dbPath: String) {
 
@@ -82,22 +87,15 @@ class TraceQueries(private val dbPath: String) {
         if (!store.runExists(runId)) return@open null
         val target = store.jdbcQuery("SELECT event_id FROM events WHERE run_id=? AND event_id=?", runId, targetEventId)
         if (target.isEmpty()) return@open null
+        store.ensureEdges(runId)
         val rows = store.jdbcQuery(
             """WITH RECURSIVE slice(event_id, depth) AS (
                  SELECT ?, 0
                  UNION
-                 SELECT p.event_id, s.depth + 1
+                 SELECT e.from_event, s.depth + 1
                  FROM slice s
-                 JOIN events cur ON cur.run_id=? AND cur.event_id = s.event_id
-                 JOIN events p ON p.run_id = cur.run_id AND (
-                      (cur.event_type = 'call' AND p.event_type = 'call' AND p.invocation_id = cur.parent_invocation_id)
-                   OR (cur.event_type IN ('throw','return','catch','assign','field-write')
-                       AND p.event_type = 'call' AND p.invocation_id = cur.invocation_id AND p.event_id <> cur.event_id)
-                   OR (cur.event_type = 'catch' AND p.event_type = 'throw'
-                       AND p.event_id = CAST(json_extract(cur.payload, '$.throw_event_id') AS INTEGER))
-                   OR (cur.event_type = 'throw' AND p.event_type = 'throw'
-                       AND p.event_id = CAST(json_extract(cur.payload, '$.cause_event_id') AS INTEGER))
-                 )
+                 JOIN edges e INDEXED BY idx_edges_to ON e.run_id = ? AND e.to_event = s.event_id
+                   AND e.kind IN ('call','exception-propagation','data-flow')
                  WHERE s.depth < ?
                )
                SELECT e.*, s.depth AS slice_depth FROM slice s JOIN events e ON e.event_id = s.event_id

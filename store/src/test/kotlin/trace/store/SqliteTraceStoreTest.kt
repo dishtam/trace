@@ -60,6 +60,33 @@ class SqliteTraceStoreTest {
         }
     }
 
+    @Test fun edgesBuiltAtIngestAndRebuildIsIdempotent(@TempDir dir: Path) {
+        val db = dir.resolve("trace.db").toString()
+        fun edges(store: SqliteTraceStore) = store.jdbcQuery(
+            "SELECT from_event, to_event, kind FROM edges WHERE run_id=? ORDER BY to_event, from_event", "run-1")
+            .map { Triple((it["from_event"] as Number).toLong(), (it["to_event"] as Number).toLong(), it["kind"] as String) }
+        SqliteTraceStore(db).use { store ->
+            store.createRun("run-1", startedAtNs = 1000, app = "demo", captureProfile = "summary")
+            store.insertEvents("run-1", allEventTypes())
+            store.finalizeRun("run-1", droppedEvents = 0, complete = true)
+            // Event ids 1..9 in insert order. Predecessors: return(2)->call(1),
+            // catch(4)->call(1) and catch(4)->throw(3), assign(5)->call(1),
+            // field-write(6)->call(1). Throw(3) has no call for invocation 2.
+            val expected = listOf(
+                Triple(1L, 2L, "call"),
+                Triple(1L, 4L, "call"),
+                Triple(3L, 4L, "exception-propagation"),
+                Triple(1L, 5L, "call"),
+                Triple(1L, 6L, "call"),
+            )
+            assertEquals(expected, edges(store))
+            store.rebuildEdges("run-1")
+            assertEquals(expected, edges(store), "rebuild must not duplicate edges")
+            store.ensureEdges("run-1")
+            assertEquals(expected, edges(store), "ensureEdges must be a no-op when edges exist")
+        }
+    }
+
     @Test fun redactedSecretNeverReachesStorage(@TempDir dir: Path) {
         SqliteTraceStore(dir.resolve("trace.db").toString()).use { store ->
             store.createRun("run-3")
